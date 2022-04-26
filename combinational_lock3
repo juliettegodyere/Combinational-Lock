@@ -5,316 +5,370 @@
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.STD_LOGIC_SIGNED.ALL;
+use IEEE.numeric_std.all;
 
 entity top_level is
-    Port ( 
-        CLK100MHZ: in std_logic;
-        BTNL, BTNR, BTNU, BTND, BTNC: in std_logic;        --Push buttons
-        SWITCHES:  in STD_LOGIC_VECTOR (15 downto 0);       --Slider switches
-        LEDS:      out STD_LOGIC_VECTOR (7 downto 0);      --LEDs
-        DIGITS:    out STD_LOGIC_VECTOR (7 downto 0);      --Digits of 7-segment display
-        SEGMENTS:  out STD_LOGIC_VECTOR (7 downto 0)   );  --Segments of 7-segment display 
+--generic(ClockFrequencyHz : natural);
+    Port ( CLK100MHZ: in std_logic;
+	       BTNL, BTNR, BTNU, BTND, BTNC: in std_logic;        --Push buttons
+	       SWITCHES:  in STD_LOGIC_VECTOR (15 downto 0);       --Slider switches
+           LEDS:      out STD_LOGIC_VECTOR (7 downto 0);      --LEDs
+		   DIGITS:    out STD_LOGIC_VECTOR (7 downto 0);      --Digits of 7-segment display
+           SEGMENTS:  out STD_LOGIC_VECTOR (7 downto 0)   );  --Segments of 7-segment display 
 end top_level;
 
 architecture Behavioral of top_level is
+  --Local declarations go here
     --Local declarations go here
-    signal passcode: std_logic_vector (15 downto 0):=X"0240"; -- Student ID
-    signal passcode_input: std_logic_vector (15 downto 0):=X"0000"; --User input
-    signal new_passcode: std_logic_vector (15 downto 0):=X"0000"; --New passcode
-    signal b_date: std_logic_vector(15 downto 0):=X"1967"; --Birth date
-    signal b_date_input: std_logic_vector(15 downto 0):=X"2222"; --New birth date
-    signal display_value: std_logic_vector (3 downto 0); --The value to be displayed on the 7-segment display
-    signal enable: std_logic;
-    signal count: std_logic_vector(15 downto 0):=(OTHERS=>'0') ; 
-    signal dig_count, nav_count: Integer:=0; -- Used as multiplexer for diplaying of multiple displays
-    constant MAX_COUNT: std_logic_vector(15 downto 0) := "1100001101010000";  -- 100,000: use this for synthesis  --  "1010";  
-    type my_states IS (idle,s0, s1, s2, s3, s4, s5, s6, s7,s8); -- id: idle, st:start, s0: input 1, s1: input 2, s2: input 3, s3: input 4, re: reset
-    signal state: my_states:=idle; 
-    signal start_btnc_prev, accept_btnl_prev, change_passcode_btnu_prev, debounced_btnc, debounced_btnl, debounced_btnu: std_logic :='0';
-
+     signal passcode: std_logic_vector (15 downto 0):=X"0240"; --The four digit student ID
+     signal passcode_input: std_logic_vector (15 downto 0):=X"0000"; --User input
+     signal new_passcode: std_logic_vector (15 downto 0):=X"0000"; --New passcode
+     signal b_date: std_logic_vector(15 downto 0):=X"1967"; --Birth date
+     signal b_date_input: std_logic_vector(15 downto 0):=X"2222"; --New birth date
+     signal display_value: std_logic_vector (3 downto 0); --The value to be displayed on the 7-segment display
+     signal enable: std_logic; --The derived 1KHz enable signal
+     signal count: std_logic_vector(15 downto 0):=(OTHERS=>'0') ; --The counter for the 1KHz clock
+     signal dig_count, nav_count: Integer:=0; -- Used as multiplexer for diplaying of multiple displays
+     constant MAX_COUNT: std_logic_vector(15 downto 0) := "1100001101010000";  -- 100,000: use this for synthesis  --  "1010"; 
+     signal NAV_COUNT_MAX: std_logic_vector(15 downto 0) := X"0000";  -- 100,000,000, 5F5E100
+     type my_states IS (Idle, s0, s1, s2, s3, s4,s5, s6, s7,s8);
+     signal state: my_states:=Idle;
+     signal state_temp1: my_states:=Idle;  
+     signal accept_btnl_prev, start_btnc_prev, start_btnu_prev,debounced_btnc, start_btnl_prev, debounced_btnl, debounced_btnu: std_logic :='0';
+     constant ClockFrequencyHz : integer := 100; --100Hz
+    
     -- Calculate the number of clock cycles in minutes/seconds
-    function CounterVal(Minutes : integer := 0;
-                        Seconds : integer := 0) return integer is
-        variable TotalSeconds : integer;
-    begin
-        TotalSeconds := Seconds + Minutes * 60;
-        return TotalSeconds * ClockFrequencyHz -1;
-    end function;
- 
-    -- Counter for counting clock periods, 1 minute max
-    signal Counter : integer range 0 to CounterVal(Minutes => 1) +1;
+       function CounterVal(Minutes : integer := 0;
+                         Seconds : integer := 0) return integer is
+          variable TotalSeconds : integer;
+       begin
+          TotalSeconds := Seconds + Minutes * 60;
+          return TotalSeconds * ClockFrequencyHz -1;
+       end function;
 
     begin
-    --Processing goes here
-    process(enable)
-        begin
-            --btn values and previous values
-            start_btnc_prev = BTNC;
-            accept_btnl_prev = BTNL;
-            change_passcode_btnu_prev = BTNU;
-
-            if rising_edge(enable) then
-                --start button pressed
-                if BTNC = '1' and start_btnc_prev = '0' then
-                    case state is
-                        when idle => if debounced_btnc = '1' then state <= s0;
-                                    else state <= idle; end if;
-                        when s7 => if debounced_btnc = '1' then state <= s0;
-                                    else state <= s7; end if; 
-                        when others => state <= idle;
-                    end case;
-                --change passcode button pressed
-                elsif BTNU = '1' and change_passcode_btnu_prev = '0' then
-                    case state is
-                        when idle => if debounced_btnu = '1' then state <= s0;
-                                    else state <= idle; end if;
-                        when s7 => if debounced_btnu = '1' then state <= s5;
-                                    else state <= s7; end if;
-                        when others => state <= idle;
-                    end case;
-                --accept button pressed
-                elsif BTNL = '1' and start_btnl_prev = '0' then
-                    case state is
-                        when s0 => if debounced_btnl = '1' then state <= s1;
-                                    else state <= s0; end if;
-                        when s1 => if debounced_btnl = '1' then state <= s2;
-                                    else state <= s1; end if;
-                        when s2 => if debounced_btnl = '1' then state <= s3;
-                                    else state <= s2; end if;
-                        when s3 => if debounced_btnl = '1' then state <= s4;
-                                    else state <= s3; end if;
-                        when s4 => if debounced_btnl = '1' then state <= s5;
-                                    else state <= s4; end if;
-                        when s5 => if debounced_btnl = '1' then state <= s6;
-                                    else state <= s5; end if;
-                        when s6 => if debounced_btnl = '1' then state <= s7;
-                                    else state <= s6; end if;
-                        when s7 => if debounced_btnl = '1' then state <= s0;
-                                    else state <= s7; end if;
-                        when others => state <= idle;
-                    end case;
-                else
-                    state <= idle;
+        --IKHz clock process
+        process (enable) 
+            begin 
+                if (rising_edge(enable)) then  
+                  
+                    start_btnc_prev <= BTNC; --Assign button previous state
+                                   
+                     start_btnu_prev <= BTNU; --Assign button previous state
+                                                    
+                     start_btnl_prev <= BTNL; --Assign button previous state
+               
+                --Check if the first button is pressed and compare the recent button value with the previous value
+               if (BTNC = '1' and start_btnc_prev = '0') then
+                    case state_temp1 is
+                                       when Idle => if debounced_btnc = '1' then state_temp1 <= s0;
+                                                  else state_temp1 <= Idle; end if;
+                                                    when s0 => if debounced_btnc = '1' then state_temp1 <= s0;  
+                                                                                                  end if;
+                                                                                         when s1 => if debounced_btnc = '1' then state_temp1 <= s0; 
+                                                                                                  end if;
+                                                                                         when s2 => if debounced_btnc ='1' then state_temp1 <= s0; 
+                                                                                                    end if;
+                                                                                         when s3 => if debounced_btnc = '1' then state_temp1 <= s0; 
+                                                                                                   end if;
+                                                                                         when s4 => if debounced_btnc = '1' then state_temp1 <= s0; 
+                                                                                                   end if;
+                                                                                         when s5 => if debounced_btnc = '1' then state_temp1 <= s0;
+                                                                                                   end if;
+                                                                                         when s6 => if debounced_btnc = '1' then state_temp1 <= s0;
+                                                                                                      end if;
+                                                                                         when s7 => if debounced_btnc = '1' then state_temp1 <= s0;
+                                                                                             end if;
+                                                                                          when s8 => if debounced_btnc = '1' then state_temp1 <= s0;
+                                                                                                end if;
+                                                  
+                                  end case;
+                 elsif (BTNU = '1' and start_btnu_prev = '0') then
+                 case state_temp1 is
+                                         when Idle => if debounced_btnc = '1' then state_temp1 <= s5;
+                                                    else state_temp1 <= Idle; end if; 
+                                         when s5 => if debounced_btnc = '1' then state_temp1 <= s6;
+                                                   else state_temp1 <= s5; end if;
+                                         when s6 => if debounced_btnc = '1' then if b_date_input = b_date then state_temp1 <= s7;
+                                                      else state_temp1 <=s5; end if; else state_temp1 <= s6; end if;
+                                         when s7 => if debounced_btnc = '1' then state_temp1 <= s8;
+                                             else state_temp1 <= s7; end if;
+                                          when s8 => if debounced_btnc = '1' then if new_passcode /= passcode and new_passcode /= X"0000" then state_temp1 <= s0;
+                                                else state_temp1 <= s7;end if; else state_temp1 <= idle; end if;
+                                         when others => state_temp1 <= idle;
+                                    end case;
+                 elsif (BTNL = '1' and start_btnl_prev = '0') then
+                 case state_temp1 is
+                                         
+                                         when s0 => if debounced_btnc = '1' then state_temp1 <= s1;  
+                                                   else state_temp1 <= s0; end if;
+                                         when s1 => if debounced_btnc = '1' then state_temp1 <= s2; 
+                                                   else state_temp1 <= s1; end if;
+                                         when s2 => if debounced_btnc ='1' then state_temp1 <= s3; 
+                                                   else state_temp1 <= s2; end if;
+                                         when s3 => if debounced_btnc = '1' then state_temp1 <= s4; 
+                                                   else state_temp1 <= s3; end if;
+                                         when s4 => if debounced_btnc = '1' then state_temp1 <= s0; 
+                                                   else state_temp1 <= s4; end if;
+                                         when s5 => if debounced_btnc = '1' then state_temp1 <= s6;
+                                                   else state_temp1 <= s5; end if;
+                                         when s6 => if debounced_btnc = '1' then if b_date_input = b_date then state_temp1 <= s7;
+                                                      else state_temp1 <=s5; end if; else state_temp1 <= s6; end if;
+                                         when s7 => if debounced_btnc = '1' then state_temp1 <= s8;
+                                             else state_temp1 <= s7; end if;
+                                          when s8 => if debounced_btnc = '1' then if new_passcode /= passcode and new_passcode /= X"0000" then state_temp1 <= s0;
+                                                else state_temp1 <= s7;end if; else state_temp1 <= idle; end if;
+                                         when others => state_temp1 <= idle;
+                                    end case;
                 end if;
-            end if;
-    end process;
-
-    process(CLK100MHZ)
-        begin
-            if rising_edge(CLK100MHZ) then
-                -- Counters
-                count <= count + 1;
-                nav_count <= nav_count + 1;
-               if state = idle then
-                    if count = MAX_COUNT then enable <= '1';
-                        count <= OTHERS => '0';
-                        LEDS <= "00000000"; -- Turn off unused LEDs
-                        DIGITS <= "11111111"; -- Turn off all display digits
-                    else enable <= '0'; end if;
-                elsif state = s0 then
-                    if count = MAX_COUNT then enable <= '1' ; 
-                        count <= (others => '0') ;
-                        passcode_input(3 DOWNTO 0) <= SWITCHES(3 DOWNTO 0);
-                        -----Multiplexer: Display multiple values-----
-                        if dig_count = 0 then display_value <= "1111"; --Value "H"
-                           DIGITS <= "11111110";
-                        elsif dig_count = 1 then display_value <= "0000"; --Value "0"
-                              DIGITS <= "11111101"; end if;
-                        if dig_count > 1 then dig_count <= 0;
-                        else dig_count <= dig_count+1; end if;
-                        ------END Multiplexer-----
-                    else enable <= '0' ;  end if ;
-                elsif state = s1 then
-                    if count = MAX_COUNT then  enable <= '1' ; 
-                        count <= (others => '0') ;
-                        passcode_input(7 DOWNTO 4) <= SWITCHES(7 DOWNTO 4); 
-                        display_value <= SWITCHES(3 DOWNTO 0); 
-                        DIGITS <= "11111110";
-                    else  enable <= '0' ; end if ;
-                elsif state = s2 then
-                    if count = MAX_COUNT then  enable <= '1' ; 
-                        count <= (others => '0') ;
-                        passcode_input(11 DOWNTO 8) <= SWITCHES(11 DOWNTO 8);
-                          -----Multiplexer: Display multiple values on the segment display-----
-                        if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
-                            DIGITS <= "11111110"; 
-                        elsif dig_count = 1 then display_value <= SWITCHES(7 DOWNTO 4);
-                            DIGITS <= "11111101"; 
-                        end if;
-                        ------END Multiplexer-----
-                    else  enable <= '0' ; end if ;
-                elsif state = s3 then
-                    if count = MAX_COUNT then enable <= '1' ; 
-                        count <= (others => '0') ;
-                        passcode_input(15 DOWNTO 12) <= SWITCHES(15 DOWNTO 12);
-                        -----Multiplexer: Display multiple values-----
-                        if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
-                            DIGITS <= "11111110"; 
-                        elsif dig_count = 1 then display_value <= SWITCHES(7 DOWNTO 4);
-                            DIGITS <= "11111101"; 
-                        elsif dif_count = 2 then display_value <= SWITCHES(11 DOWNTO 8); 
-                            DIGITS <= "11111011"; end if;
-                        if dig_count > 2 then dig_count <= 0;
-                        else dig_count <= dig_count+1;end if;
-                        ------END Multiplexer-----
-                    else enable <= '0' ; end if ;
-                elsif state = s4 then
-                    if count = MAX_COUNT then enable <= '1' ; 
-                        count <= (others => '0') ;
-                        -----Multiplexer: Display multiple values-----
-                        if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
-                            DIGITS <= "11111110"; 
-                        elsif dig_count = 1 then display_value <= SWITCHES(7 DOWNTO 4);
-                            DIGITS <= "11111101"; 
-                        elsif dif_count = 2 then display_value <= SWITCHES(11 DOWNTO 8); 
-                            DIGITS <= "11111011"; 
-                        elsif dif_count = 3 then display_value <= SWITCHES(15 DOWNTO 12); 
-                            DIGITS <= "11110111"; end if;
-                        if dig_count > 3 then dig_count <= 0;
-                        else dig_count <= dig_count+1; end if;
-                        ------END Multiplexer-----
-                        if nav_count = CounterVal(Seconds => 2) then nav_count <= 0;
-                            if ((passcode_input =/ X"0000" and new_passcode = passcode_input) or passcode = passcode_input) then
-                                LEDS(7 downto 0) <= "11111111";
-                                if dig_count = 0 then display_value <= "1111";
-                                    DIGITS <= "11111110"; --Displays "H" on the third digit
-                                elsif dig_count = 1 then display_value <= "0000";
-                                    DIGITS <= "11111101"; --Displays "O" on the third digit
+             end if; 
+          end process; 
+          state <= state_temp1;
+        process (clk100MHz) 
+                  begin 
+                  if rising_edge (clk100MHz) then 
+                     count <= count + 1 ;
+                     enable <= '0' ;
+                     if state = Idle then
+                        if count = MAX_COUNT then enable <= '1' ; 
+                           count <= (others => '0') ;
+                           LEDS <= "00000000"; -- Turn off unused LEDs
+                           DIGITS <= "11111111"; -- Turn off all display digits
+                        else enable <= '0' ;  end if ;
+                        elsif state = s0 then
+                                            if count = MAX_COUNT then enable <= '1' ; 
+                                                count <= (others => '0') ;
+                                                passcode_input(3 DOWNTO 0) <= SWITCHES(3 DOWNTO 0);
+                                                -----Multiplexer: Display multiple values-----
+                                                if dig_count = 0 then display_value <= "1010"; --Value "N"
+                                                   DIGITS <= "11111110";
+                                                elsif dig_count = 1 then display_value <= "0000"; --Value "0"
+                                                      DIGITS <= "11111101"; end if;
+                                                if dig_count > 1 then dig_count <= 0;
+                                                else dig_count <= dig_count+1; end if;
+                                                ------END Multiplexer-----
+                                                nav_count <= 0;
+                                            else enable <= '0' ;  end if ;
+                                        elsif state = s1 then
+                                            if count = MAX_COUNT then  enable <= '1' ; 
+                                                count <= (others => '0') ;
+                                                passcode_input(7 DOWNTO 4) <= SWITCHES(7 DOWNTO 4); 
+                                                display_value <= SWITCHES(3 DOWNTO 0); 
+                                                DIGITS <= "11111110";
+                                            else  enable <= '0' ; end if ;
+                                        elsif state = s2 then
+                                            if count = MAX_COUNT then  enable <= '1' ; 
+                                                count <= (others => '0') ;
+                                                passcode_input(11 DOWNTO 8) <= SWITCHES(11 DOWNTO 8);
+                                                  -----Multiplexer: Display multiple values on the segment display-----
+                                                if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
+                                                    DIGITS <= "11111110"; 
+                                                elsif dig_count = 1 then display_value <= SWITCHES(7 DOWNTO 4);
+                                                    DIGITS <= "11111101"; 
+                                                end if;
+                                                ------END Multiplexer-----
+                                            else  enable <= '0' ; end if ;
+                                        elsif state = s3 then
+                                            if count = MAX_COUNT then enable <= '1' ; 
+                                                count <= (others => '0') ;
+                                                passcode_input(15 DOWNTO 12) <= SWITCHES(15 DOWNTO 12);
+                                                -----Multiplexer: Display multiple values-----
+                                                if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
+                                                    DIGITS <= "11111110"; 
+                                                elsif dig_count = 1 then display_value <= SWITCHES(7 DOWNTO 4);
+                                                    DIGITS <= "11111101"; 
+                                                elsif dig_count = 2 then display_value <= SWITCHES(11 DOWNTO 8); 
+                                                    DIGITS <= "11111011"; end if;
+                                                if dig_count > 2 then dig_count <= 0;
+                                                else dig_count <= dig_count+1;end if;
+                                                ------END Multiplexer-----
+                                            else enable <= '0' ; end if ;
+                                        elsif state = s4 then
+                                            if count = MAX_COUNT then enable <= '1' ; 
+                                                count <= (others => '0') ;
+                                             
+                                                ------END Multiplexer-----
+                                                if nav_count < 10000 then
+                                                   -----Multiplexer: Display multiple values-----
+                                                                                             if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
+                                                                                                 DIGITS <= "11111110"; 
+                                                                                             elsif dig_count = 1 then display_value <= SWITCHES(7 DOWNTO 4);
+                                                                                                 DIGITS <= "11111101"; 
+                                                                                             elsif dig_count = 2 then display_value <= SWITCHES(11 DOWNTO 8); 
+                                                                                                 DIGITS <= "11111011"; 
+                                                                                             elsif dig_count = 3 then display_value <= SWITCHES(15 DOWNTO 12); 
+                                                                                                 DIGITS <= "11110111"; end if;
+                                                                                             if dig_count > 3 then dig_count <= 0;
+                                                                                             else dig_count <= dig_count+1; end if;
+                                                     nav_count <= nav_count + 1;
+                                                 elsif nav_count = 10000 then
+                                                     if ((passcode_input /=  X"0000" and new_passcode = passcode_input) or passcode = passcode_input) then
+                                                                                                        LEDS(7 downto 0) <= "11111111";
+                                                                                                        if dig_count = 0 then display_value <= "1111";
+                                                                                                            DIGITS <= "11111110"; --Displays "H" on the third digit
+                                                                                                        elsif dig_count = 1 then display_value <= "0000";
+                                                                                                            DIGITS <= "11111101"; --Displays "O" on the third digit
+                                                                                                        end if;
+                                                                                                        if dig_count > 1 then dig_count <= 0;
+                                                                                                        else dig_count <= dig_count+1;end if;
+                                                                                                    else
+                                                                                                        LEDS(7 downto 0) <= "00000000";
+                                                                                                        if dig_count = 0 then display_value <= "1100";
+                                                                                                            DIGITS <= "11111110";--Displays "r" on the third digit
+                                                                                                        elsif dig_count = 1 then display_value <= "1100";
+                                                                                                            DIGITS <= "11111101";--Displays "r" on the third digit
+                                                                                                        elsif dig_count = 2 then display_value <= "1110";
+                                                                                                            DIGITS <= "11111011";--Displays "E" on the third digit
+                                                                                                        end if;
+                                                                                                    end if;
+                                                end if;
+                                            else enable <= '0' ; end if;
+                      elsif state = s5 then
+                           if count = MAX_COUNT then enable <= '1';
+                               count <= (others => '0') ; 
+                               --Prompt user to enter birthdate
+                               if dig_count = 0 then display_value <= "1101";
+                                   DIGITS <= "11111110"; --Displays "D" on the first digit
+                               elsif dig_count = 1 then  display_value <= "1011";
+                                   DIGITS <= "11111101"; -- Displays "B" on the second digit
+                               end if;
+                               --Stop count after 2 counts
+                               if dig_count > 1 then dig_count <= 0;
+                               else dig_count <= dig_count+1; end if;
+                                -- Read the new birthdate
+                                b_date_input(3 DOWNTO 0) <= SWITCHES(3 DOWNTO 0); --Get the first user input
+                                b_date_input(7 DOWNTO 4) <= SWITCHES(7 DOWNTO 4); --Get the second user input
+                                b_date_input(11 DOWNTO 8) <= SWITCHES(11 DOWNTO 8);--Get the third user input
+                                b_date_input(15 DOWNTO 12) <= SWITCHES(15 DOWNTO 12); --Get the fouth user input
+                                nav_count <= 0;
+                            else enable <= '0'; end if;
+                          elsif state = s6 then
+                               if count = MAX_COUNT then enable <= '1';
+                                 count <= (others => '0') ; 
+                                 --Display birth date entered by user
+                                if nav_count < 10000 then 
+                                
+                                     if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
+                                                                   DIGITS <= "11111110"; 
+                                                                elsif dig_count = 1 then display_value <=  SWITCHES(7 DOWNTO 4);
+                                                                   DIGITS <= "11111101"; 
+                                                                elsif dig_count = 2 then display_value <= SWITCHES(11 DOWNTO 8);
+                                                                  DIGITS <= "11111011"; 
+                                                                elsif dig_count = 3 then display_value <= SWITCHES(15 DOWNTO 12);
+                                                                    DIGITS <= "11110111"; end if;
+                                                                if dig_count > 3 then dig_count <= 0; 
+                                                                else dig_count <= dig_count+1; end if;
+                                                                -- if 2 seconds have passed, display "OH" or "Err" to user
+                                      nav_count <= nav_count + 1;
+                                elsif nav_count = 10000 then
+                                     if (b_date = b_date_input) then
+                                                               LEDS(7 downto 0) <= "11111111";
+                                                               DIGITS <= "11111111";
+                                                               if dig_count = 0 then display_value <= "1111";
+                                                                   DIGITS <= "11111110"; --Displays "H" on the third digit
+                                                               elsif dig_count = 1 then display_value <= "0000";
+                                                                     DIGITS <= "11111101"; --Displays "O" on the third digit
+                                                               end if;
+                                                               if dig_count > 1 then dig_count <= 0;
+                                                               else dig_count <= dig_count+1;end if;
+                                    else
+                                                            LEDS(7 downto 0) <= "00000000"; display_value <= "1100";
+                                                            DIGITS <= "11111110";--Displays "r" on the third digit
+                                                            if dig_count = 0 then display_value <= "1100";
+                                                               DIGITS <= "11111110";--Displays "r" on the third digit
+                                                            elsif dig_count = 1 then display_value <= "1100";
+                                                            DIGITS <= "11111101";--Displays "r" on the third digit
+                                                            elsif dig_count = 2 then display_value <= "1110";
+                                                            DIGITS <= "11111011";--Displays "E" on the third digit
+                                                            end if;
+                                                            if dig_count > 2 then dig_count <= 0;
+                                                            else dig_count <= dig_count+1;end if;
+                                                            
+                                                          end if; 
                                 end if;
-                                if dig_count > 1 then dig_count <= 0;
-                                else dig_count <= dig_count+1;end if;
-                            else
-                                LEDS(7 downto 0) <= "00000000";
-                                if dig_count = 0 then display_value <= "1100";
-                                    DIGITS <= "11111110";--Displays "r" on the third digit
-                                elsif dig_count = 1 then display_value <= "1100";
-                                    DIGITS <= "11111101";--Displays "r" on the third digit
-                                elsif dig_count = 2 then display_value <= "1110";
-                                    DIGITS <= "11111011";--Displays "E" on the third digit
-                                end if;
-                            end if
-                        end if;
-                    else enable <= '0' ; 
-                elsif state = s5 then
-                        if count = MAX_COUNT then enable <= '1';
-                            count <= OTHERS => '0';
-                            --Prompt user to enter birthdate
-                            if dig_count = 0 then display_value <= "1101";
-                                DIGITS <= "11111110"; --Displays "D" on the first digit
-                            elsif dig_count = 1 then  display_value <= "1011";
-                                DIGITS <= "11111101"; -- Displays "B" on the second digit
-                            end if;
-                            --Stop count after 2 counts
-                            if dig_count > 1 then dig_count <= 0;
-                            else dig_count <= dig_count+1; end if;
-                            -- Read the new birthdate
-                            b_date_input(3 DOWNTO 0) <= SWITCHES(3 DOWNTO 0); --Get the first user input
-                            b_date_input(7 DOWNTO 4) <= SWITCHES(7 DOWNTO 4); --Get the second user input
-                            b_date_input(11 DOWNTO 5) <= SWITCHES(11 DOWNTO 5); --Get the third user input
-                            b_date_input(15 DOWNTO 12) <= SWITCHES(15 DOWNTO 12); --Get the fouth user input
-                        else enable <= '0'; end if;
-                elsif state = s6 then
-                    if count = MAX_COUNT then enable <= '1';
-                        count <= OTHERS => '0';
-                        --Display birth date entered by user
-                        if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
-                            DIGITS <= "11111110"; 
-                        elsif dig_count = 1 then display_value <=  SWITCHES(7 DOWNTO 4);
-                            DIGITS <= "11111101"; 
-                        elsif dig_count = 0 then display_value <= SWITCHES(11 DOWNTO 5);
-                            DIGITS <= "11111011"; 
-                        elsif dig_count = 1 then display_value <= SWITCHES(15 DOWNTO 12);
-                            DIGITS <= "11110111"; end if;
-                        if dig_count > 3 then dig_count <= 0; 
-                        else dig_count <= dig_count+1; end if;
-                        -- if 2 seconds have passed, display "OH" or "Err" to user
-                        if nav_count = CounterVal(Seconds => 2) then nav_count <= 0;
-                            if b_date_input = b_date then
-                                -- Prompt user to enter new passcode
-                                if dig_count = 0 then display_value <= "1111";
-                                    DIGITS <= "11111110"; --Displays "H" 
-                                elsif dig_count = 1 then display_value <= "1110";
-                                    DIGITS <= "11111101"; --Displays "E"
-                                elsif dig_count = 1 then display_value <= "1010";
-                                    DIGITS <= "11111011"; --Displays "n"
-                                end if;
-                                --Stop count after 2 counts
-                                if dig_count > 2 then dig_count <= 0;
-                                else dig_count <= dig_count+1; end if;
-                                -- Read new passcode
-                                new_passcode(3 DOWNTO 0) <= SWITCHES(3 DOWNTO 0); --Get the first user input from the first 4 right most switches
-                                new_passcode(7 DOWNTO 4) <= SWITCHES(7 DOWNTO 4); --Get the first user input from the first 4 right most switches
-                                new_passcode(11 DOWNTO 5) <= SWITCHES(11 DOWNTO 5); --Get the first user input from the first 4 right most switches
-                                new_passcode(15 DOWNTO 12) <= SWITCHES(15 DOWNTO 12); --Get the first user input from the first 4 right most switches
-                            else
-                                LEDS(7 downto 0) <= "00000000";
-                                if dig_count = 0 then display_value <= "1100";--Displays "r" 
-                                    DIGITS <= "11111110";
-                                elsif dig_count = 1 then display_value <= "1100";--Displays "r"
-                                    DIGITS <= "11111101";
-                                elsif dig_count = 2 then display_value <= "1110";
-                                    DIGITS <= "11111011";--Displays "E" 
-                                end if;
-                                --wait 1 second and take the user back to s5 to try again
-                                if nav_count = CounterVal(Seconds => 1) then nav_count <= 0;
-                                    state <= s5; end if;
-                            end if;
-                        end if;
-                    else enable <= '0';
-                    end if;
-                elsif state = s7 then
-                    if count = MAX_COUNT then enable <= '1';
-                        count <= OTHERS => '0';
-                        --  Display the new passcode entered by user
-                        if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
-                            DIGITS <= "11111110"; 
-                        elsif dig_count = 1 then display_value <=  SWITCHES(7 DOWNTO 4);
-                            DIGITS <= "11111101"; 
-                        elsif dig_count = 0 then display_value <= SWITCHES(11 DOWNTO 5);
-                            DIGITS <= "11111011"; 
-                        elsif dig_count = 1 then display_value <= SWITCHES(15 DOWNTO 12);
-                            DIGITS <= "11110111"; end if;
-                        if dig_count > 3 then dig_count <= 0; 
-                        else dig_count <= dig_count+1; end if;
-                        -- if 2 seconds have passed, display "OH" or "Err" to user
-                        if nav_count = CounterVal(Seconds => 2) then nav_count <= 0;
-                            if new_passcode /= passcode and new_passcode /= X"0000" then
-                                -- Take the user to start s0 to login with new passcode
-                                state <= s0;
-                                --Stop count after 2 counts
-                                if dig_count > 1 then dig_count <= 0;
-                                else dig_count <= dig_count+1; end if;
-                            else
-                                LEDS(7 downto 0) <= "00000000";
-                                if dig_count = 0 then display_value <= "1100";--Displays "r" 
-                                    DIGITS <= "11111110";
-                                elsif dig_count = 1 then display_value <= "1100";--Displays "r"
-                                    DIGITS <= "11111101";
-                                elsif dig_count = 2 then display_value <= "1110";
-                                    DIGITS <= "11111011";--Displays "E" 
-                                end if;
-                                -- if 1 second have passed take the user back to s6 to try again
-                                if nav_count = CounterVal(Seconds => 1) then nav_count <= 0;
-                                    state <= s6; end if;
-                            end if;
-                        end if;
-                    else enable <= '0';
-                    end if;
-                end if;
-            end if;
-    end process;
- -- Send the result onto the LEDs so that we can see them
- --LEDS(7 downto 0) <= result;
-start_btn_debouncer: ENTITY work.Debouncer(Behavioral) PORT MAP(clk=>enable, D_BTNC=>start_btnl_prev, btnc_clr=>debounced_btnc);
-accept_btn_debouncer: ENTITY work.Debounce(Behavioral) PORT MAP(clk=>enable, D_BTNU=>accept_btnu_prev, btnu_clr=>debounced_btnu);
-change_passcode_btn_debouncer: ENTITY work.Debounce(Behavioral) PORT MAP(clk=>enable, D_BTNL=>change_passcode_btnl_prev, btnl_clr=>debounced_btnl);
-display: ENTITY work.display(Behavioral) PORT MAP(number=> display_value, segs=> SEGMENTS);
-
- -- We're not using these signals, but we have to give some value to
- -- all declared outputs so that the code will compile
---LEDS(7 downto 0) <= "00000000"; -- Turn off unused LEDs
---DIGITS <= "11111111"; -- Turn off digit of display
---SEGMENTS <= "11111111";
-  
-
-end Behavioral;	
+                               
+                                            
+                             else enable <= '0'; end if;
+                          elsif state = s7 then
+                               if count = MAX_COUNT then enable <= '1';
+                                 count <= (others => '0') ; 
+                                 nav_count <= 0;
+                                 new_passcode(3 DOWNTO 0) <= SWITCHES(3 DOWNTO 0); --Get the first user input
+                                 new_passcode(7 DOWNTO 4) <= SWITCHES(7 DOWNTO 4); --Get the second user input
+                                 new_passcode(11 DOWNTO 8) <= SWITCHES(11 DOWNTO 8);--Get the third user input
+                                 new_passcode(15 DOWNTO 12) <= SWITCHES(15 DOWNTO 12); --Get the fouth user input
+                                 
+                                  -- Prompt user to enter new passcode
+                                                                if dig_count = 0 then display_value <= "1111";
+                                                                    DIGITS <= "11111110"; --Displays "H" 
+                                                                elsif dig_count = 1 then display_value <= "1110";
+                                                                    DIGITS <= "11111101"; --Displays "E"
+                                                                elsif dig_count = 2 then display_value <= "1010";
+                                                                    DIGITS <= "11111011"; --Displays "n"
+                                                                end if;
+                                                                --Stop count after 2 counts
+                                                                if dig_count > 2 then dig_count <= 0;
+                                                                else dig_count <= dig_count+1; end if;
+                                           else enable <= '0';end if;
+                           elsif state <= s8 then
+                            if count = MAX_COUNT then enable <= '1';
+                                                            count <= (others => '0') ; 
+                                                            --Display birth date entered by user
+                                                           if nav_count < 10000 then 
+                                                           
+                                                                if dig_count = 0 then display_value <= SWITCHES(3 DOWNTO 0);
+                                                                                              DIGITS <= "11111110"; 
+                                                                                           elsif dig_count = 1 then display_value <=  SWITCHES(7 DOWNTO 4);
+                                                                                              DIGITS <= "11111101"; 
+                                                                                               elsif dig_count = 2 then display_value <= SWITCHES(11 DOWNTO 8);
+                                                                                              DIGITS <= "11111011";
+                                                                                           elsif dig_count = 3 then display_value <= SWITCHES(15 DOWNTO 12);
+                                                                                               DIGITS <= "11110111"; end if;
+                                                                                           if dig_count > 3 then dig_count <= 0; 
+                                                                                           else dig_count <= dig_count+1; end if;
+                                                                                           -- if 2 seconds have passed, display "OH" or "Err" to user
+                                                                 nav_count <= nav_count + 1;
+                                                           elsif nav_count >= 10000 then
+                                                                if (b_date = b_date_input) then
+                                                                                          LEDS(7 downto 0) <= "11111111";
+                                                                                          DIGITS <= "11111111";
+                                                                                          if dig_count = 0 then display_value <= "1111";
+                                                                                              DIGITS <= "11111110"; --Displays "H" on the third digit
+                                                                                          elsif dig_count = 1 then display_value <= "0000";
+                                                                                                DIGITS <= "11111101"; --Displays "O" on the third digit
+                                                                                          end if;
+                                                                                          if dig_count > 1 then dig_count <= 0;
+                                                                                          else dig_count <= dig_count+1;end if;
+                                                               else
+                                                                                       LEDS(7 downto 0) <= "00000000"; display_value <= "1100";
+                                                                                       DIGITS <= "11111110";--Displays "r" on the third digit
+                                                                                       if dig_count = 0 then display_value <= "1100";
+                                                                                          DIGITS <= "11111110";--Displays "r" on the third digit
+                                                                                       elsif dig_count = 1 then display_value <= "1100";
+                                                                                       DIGITS <= "11111101";--Displays "r" on the third digit
+                                                                                       elsif dig_count = 2 then display_value <= "1110";
+                                                                                       DIGITS <= "11111011";--Displays "E" on the third digit
+                                                                                       end if;
+                                                                                       if dig_count > 2 then dig_count <= 0;
+                                                                                       else dig_count <= dig_count+1;end if;
+                                                                                       
+                                                                                     end if; 
+                                                           end if;
+                                                          
+                                                                       
+                                                        else enable <= '0'; end if;
+                           end if;
+                  end if ;
+               end process ; 
+         
+          start_btnc_debouncer: ENTITY work.Debouncer(Behavioral) port map(clk=>enable, btn=>start_btnc_prev, btn_clr=>debounced_btnc);
+          accept_btnu_debouncer: ENTITY work.Debouncer(Behavioral) PORT MAP(clk=>enable, btn=>start_btnu_prev, btn_clr=>debounced_btnu);
+          accept_btnl_debouncer: ENTITY work.Debouncer(Behavioral) PORT MAP(clk=>enable, btn=>start_btnl_prev, btn_clr=>debounced_btnl);
+          display: ENTITY work.display(Behavioral) PORT MAP(number=> display_value, segs=> SEGMENTS);
+          -- We're not using these signals, but we have to give some value to
+           -- all declared outputs so that the code will compile
+           --LEDS(7 downto 0) <= "00000000"; -- Turn off unused LEDs
+          --DIGITS <= "11111111"; -- Turn off digit of display
+          --SEGMENTS <= "11111111";
+           
+         end Behavioral;    
